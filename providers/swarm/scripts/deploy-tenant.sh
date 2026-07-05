@@ -196,6 +196,26 @@ else
   log "Using existing env files in $TENANT_DIR"
 fi
 
+# Upsert control-plane platform credentials into backend.env. These arrive via
+# the deploy process environment (never as CLI args), so they don't leak into
+# process listings. Running on every deploy means existing tenants pick up the
+# token and credential rotation just works.
+upsert_env() {
+  local key="$1" val="$2" file="$3" tmp
+  [[ -z "$val" ]] && return 0
+  if grep -q "^${key}=" "$file" 2>/dev/null; then
+    tmp="$(mktemp)"
+    grep -v "^${key}=" "$file" > "$tmp"
+    printf '%s=%s\n' "$key" "$val" >> "$tmp"
+    mv "$tmp" "$file"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+}
+upsert_env PLATFORM_API_ENABLED "${PLATFORM_API_ENABLED:-}" "$TENANT_DIR/backend.env"
+upsert_env PLATFORM_API_TOKEN "${PLATFORM_API_TOKEN:-}" "$TENANT_DIR/backend.env"
+upsert_env PLATFORM_SIGNING_SECRET "${PLATFORM_SIGNING_SECRET:-}" "$TENANT_DIR/backend.env"
+
 set -a
 # shellcheck disable=SC1091
 source "$TENANT_DIR/backend.env"
