@@ -144,6 +144,7 @@ services:
     <<: *app-env
     environment:
       CONTAINER_MODE: horizon
+    networks: [kutab]
     volumes:
       - backend-storage:/var/www/html/storage/app/public
       - backend-logs:/var/www/html/storage/logs
@@ -156,6 +157,7 @@ services:
     <<: *app-env
     environment:
       CONTAINER_MODE: scheduler
+    networks: [kutab]
     volumes:
       - backend-storage:/var/www/html/storage/app/public
       - backend-logs:/var/www/html/storage/logs
