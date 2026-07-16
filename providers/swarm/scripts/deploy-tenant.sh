@@ -82,6 +82,8 @@ while [[ $# -gt 0 ]]; do
     --platform-base-domain) PLATFORM_BASE_DOMAIN="$2"; shift 2 ;;
     --tenant-domain) TENANT_DOMAIN="$2"; shift 2 ;;
     --custom-domain) CUSTOM_DOMAIN="$2"; shift 2 ;;
+    --api-domain) API_DOMAIN_OVERRIDE="$2"; shift 2 ;;
+    --ws-domain) WS_DOMAIN_OVERRIDE="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
     --backend-image) BACKEND_IMAGE="$2"; shift 2 ;;
@@ -121,8 +123,10 @@ if [[ -z "$TENANT_DOMAIN" ]]; then
   TENANT_DOMAIN="$TENANT_NAME.$PLATFORM_BASE_DOMAIN"
 fi
 DISPLAY_NAME="${DISPLAY_NAME:-$TENANT_NAME}"
-API_DOMAIN="api.$TENANT_DOMAIN"
-WS_DOMAIN="ws.$TENANT_DOMAIN"
+# api/ws default to api.<tenant>/ws.<tenant>; --api-domain/--ws-domain override so
+# a service can have its own domain
+API_DOMAIN="${API_DOMAIN_OVERRIDE:-api.$TENANT_DOMAIN}"
+WS_DOMAIN="${WS_DOMAIN_OVERRIDE:-ws.$TENANT_DOMAIN}"
 SQL_SLUG="$(slug_sql "$TENANT_NAME")"
 DB_DATABASE="kutab_$SQL_SLUG"
 DB_USERNAME="kutab_$SQL_SLUG"

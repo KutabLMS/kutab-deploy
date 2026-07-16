@@ -6,11 +6,17 @@
 #
 #   deploy.sh <name> --tenant-domain <d> --acme-email <e>
 #            [--channel latest|dev|<tag>] [--db-mode bundled|shared|host]
-#            [--custom-domain <d>] [--with-whatsapp]
+#            [--custom-domain <d>] [--api-domain <d>] [--ws-domain <d>]
+#            [--with-whatsapp]
 #            [--tls-mode le|cloudflare|le-dns-cloudflare] [--cf-dns-token <t>]
 #            [--backend-image ..] [--frontend-image ..] [--nginx-image ..]
 #            [--skip-migrate] [--dry-run]
 #
+# Domains: the frontend serves --tenant-domain (+ --custom-domain). The API and
+# websocket default to api.<tenant-domain> / ws.<tenant-domain>; override either
+# with --api-domain / --ws-domain to give a service its own domain. Any domain you
+# don't pass is reused from the deployment's existing .env, so a redeploy never
+# silently drops one.
 # --channel picks which built images to run (CI tags master→latest, dev→dev):
 #   latest (default) | dev | any explicit tag. An explicit --backend-image etc wins.
 # --db-mode picks the database:
@@ -34,6 +40,7 @@ source "$KUTAB_ROOT/lib/common.sh"
 
 NAME="${1:-}"; [[ $# -gt 0 ]] && shift
 TENANT_DOMAIN=""; CUSTOM_DOMAIN=""; ACME_EMAIL=""; PLATFORM_BASE_DOMAIN=""
+API_DOMAIN=""; WS_DOMAIN=""
 CHANNEL="${CHANNEL:-latest}"
 BACKEND_IMAGE="${BACKEND_IMAGE:-}"; FRONTEND_IMAGE="${FRONTEND_IMAGE:-}"; NGINX_IMAGE="${NGINX_IMAGE:-}"
 WITH_WHATSAPP=false; SKIP_MIGRATE=false; DRY_RUN=false; DB_MODE=""
@@ -43,6 +50,8 @@ while [[ $# -gt 0 ]]; do
     --tenant-domain) TENANT_DOMAIN="$2"; shift 2 ;;
     --platform-base-domain) PLATFORM_BASE_DOMAIN="$2"; shift 2 ;;
     --custom-domain) CUSTOM_DOMAIN="$2"; shift 2 ;;
+    --api-domain) API_DOMAIN="$2"; shift 2 ;;
+    --ws-domain) WS_DOMAIN="$2"; shift 2 ;;
     --acme-email) ACME_EMAIL="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
     --db-mode) DB_MODE="$2"; shift 2 ;;
@@ -85,13 +94,36 @@ case "$DB_MODE" in
 esac
 HOST_DB_ROOT_PW_FILE="$(kutab_data_dir)/providers/swarm/secrets/infrastructure/host_db_root_password"
 
-API_DOMAIN="api.$TENANT_DOMAIN"; WS_DOMAIN="ws.$TENANT_DOMAIN"
 SQL_SLUG="$(printf '%s' "$NAME" | tr '-' '_' | tr -cd '[:alnum:]_')"
 DATA_ROOT="$(provider_state_root "$(basename "$PROVIDER_ROOT")")"
 DEPLOY_DIR="$DATA_ROOT/envs/$NAME"
 EDGE_DIR="$DATA_ROOT/envs/_edge"
 COMPOSE="$PROVIDER_ROOT/templates/single-stack.compose.yml"
 BP_MB="$(suggested_buffer_pool_mb)"
+
+# ── domains: flag > what this deployment already records > derived default ──────
+# (reusing the recorded value is why a redeploy without --custom-domain/--api-domain
+# no longer wipes a domain you set earlier)
+env_get() { [[ -f "$DEPLOY_DIR/.env" ]] && { grep -E "^$1=" "$DEPLOY_DIR/.env" | tail -1 | cut -d= -f2-; } || true; }
+[[ -n "$API_DOMAIN"    ]] || API_DOMAIN="$(env_get API_DOMAIN)"
+[[ -n "$API_DOMAIN"    ]] || API_DOMAIN="api.$TENANT_DOMAIN"
+[[ -n "$WS_DOMAIN"     ]] || WS_DOMAIN="$(env_get WS_DOMAIN)"
+[[ -n "$WS_DOMAIN"     ]] || WS_DOMAIN="ws.$TENANT_DOMAIN"
+[[ -n "$CUSTOM_DOMAIN" ]] || CUSTOM_DOMAIN="$(env_get CUSTOM_DOMAIN)"
+
+# keep KEY=VALUE in a generated env file current (env files are only created once,
+# so domain changes on a redeploy have to be written in explicitly)
+upsert_env() { # upsert_env KEY VALUE FILE
+  local k="$1" v="$2" f="$3" tmp
+  [[ -f "$f" ]] || return 0
+  if grep -q "^${k}=" "$f" 2>/dev/null; then
+    tmp="$(mktemp)"; grep -v "^${k}=" "$f" > "$tmp"; printf '%s=%s\n' "$k" "$v" >> "$tmp"
+    mv "$tmp" "$f"
+  else
+    printf '%s=%s\n' "$k" "$v" >> "$f"
+  fi
+  chmod 600 "$f"
+}
 
 # ── the shared edge owns :80/:443 for every tenant on this host — bring it up if
 # it's missing, so a first deploy still works end to end.
@@ -162,6 +194,16 @@ else
   log "Using existing env files in $DEPLOY_DIR"
 fi
 
+# Domain-derived values are re-applied on every deploy, so changing --api-domain /
+# --ws-domain / --tenant-domain on an existing deployment actually takes effect
+# (the env files above are only generated once).
+upsert_env APP_URL              "https://$TENANT_DOMAIN"  "$DEPLOY_DIR/backend.env"
+upsert_env APP_FRONTEND_URL     "https://$TENANT_DOMAIN"  "$DEPLOY_DIR/backend.env"
+upsert_env REVERB_HOST          "$WS_DOMAIN"              "$DEPLOY_DIR/backend.env"
+upsert_env NUXT_PUBLIC_APP_URL  "https://$TENANT_DOMAIN"  "$DEPLOY_DIR/frontend.env"
+upsert_env NUXT_PUBLIC_API_BASE "https://$API_DOMAIN/api" "$DEPLOY_DIR/frontend.env"
+upsert_env NUXT_PUBLIC_REVERB_HOST "$WS_DOMAIN"           "$DEPLOY_DIR/frontend.env"
+
 # pull DB creds + redis pw back out of backend.env for the compose .env
 DB_DATABASE="$(grep -E '^DB_DATABASE=' "$DEPLOY_DIR/backend.env" | cut -d= -f2-)"
 DB_USERNAME="$(grep -E '^DB_USERNAME=' "$DEPLOY_DIR/backend.env" | cut -d= -f2-)"
@@ -209,6 +251,8 @@ TENANT_NAME=$NAME
 KUTAB_ENV_DIR=$DEPLOY_DIR
 TENANT_DOMAIN=$TENANT_DOMAIN
 CUSTOM_DOMAIN=$CUSTOM_DOMAIN
+API_DOMAIN=$API_DOMAIN
+WS_DOMAIN=$WS_DOMAIN
 ACME_EMAIL=$ACME_EMAIL
 CHANNEL=$CHANNEL
 DB_MODE=$DB_MODE
