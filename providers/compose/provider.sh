@@ -7,7 +7,8 @@ PROVIDER_DESC="Docker Compose — dedicated single box per client (simple scalin
 
 provider_actions() {
   cat <<'ACT'
-Deploy (one box)
+Deploy edge (Traefik + shared DB)
+Deploy a tenant
 Scale services
 Update deployment
 Set custom domain
@@ -18,7 +19,7 @@ Status
 ACT
 }
 
-_compose_projects() { ls -1 "$(provider_state_root compose)/envs" 2>/dev/null; }
+_compose_projects() { ls -1 "$(provider_state_root compose)/envs" 2>/dev/null | grep -v '^_edge$' || true; }
 _compose_pick() {
   local opts; mapfile -t opts < <(_compose_projects)
   (( ${#opts[@]} )) || { ui_warn 'No compose deployments yet.'; return 1; }
@@ -28,25 +29,31 @@ _compose_pick() {
 provider_flow() {
   local S="$PROVIDER_SCRIPTS"
   case "$1" in
-    'Deploy (one box)')
+    'Deploy edge'*)
+      local email tls=(--tls-mode le) sdb=()
+      email="$(ui_input "ACME / Let's Encrypt email")"
+      if ui_confirm 'Are the domains on this host proxied through Cloudflare (orange cloud)?'; then
+        tls=(--tls-mode cloudflare)
+        ui_note 'Origin serves a self-signed cert — set each domain Cloudflare SSL/TLS to "Full". No token needed.'
+      fi
+      ui_confirm 'Also run a SHARED MySQL here (tenants can use --db-mode shared)?' && sdb=(--shared-db)
+      bash "$S/deploy-edge.sh" --acme-email "$email" "${tls[@]}" "${sdb[@]}"
+      ;;
+    'Deploy a tenant')
       ghcr_login_flow || return
-      local name domain custom email wa=() dbflag=()
+      local name domain custom email wa=() chan db
       name="$(ui_input 'Name (slug)')"; require_slug "$name"
       domain="$(ui_input 'Tenant domain (e.g. acme.com)')"
       custom="$(ui_input 'Extra/custom domain (optional)')"
       email="$(ui_input "ACME / Let's Encrypt email")"
-      local chal=(--tls-mode le)
-      if ui_confirm 'Is this domain proxied through Cloudflare (orange cloud)?'; then
-        chal=(--tls-mode cloudflare)
-        ui_note "Origin will serve a self-signed cert — set this domain's Cloudflare SSL/TLS mode to \"Full\". No token needed."
-      fi
-      if [[ "$(node_state_get DB_MODE)" == host ]]; then
-        ui_confirm 'A host database is installed — use it instead of a bundled DB container?' \
-          && dbflag=(--host-db) || dbflag=(--bundled-db)
-      fi
-      ui_confirm 'Also run the WhatsApp gateway on this box?' && wa=(--with-whatsapp)
+      chan="$(ui_menu 'Which build channel?' 'latest — stable (master)' 'dev — development branch')" || return
+      case "$chan" in dev*) chan=dev ;; *) chan=latest ;; esac
+      db="$(ui_menu 'Database for this tenant' 'bundled — its own MySQL container' 'shared — the edge MySQL (kutab-db)' 'host — MariaDB installed on the host')" || return
+      case "$db" in shared*) db=shared ;; host*) db=host ;; *) db=bundled ;; esac
+      ui_confirm 'Also run the WhatsApp gateway for this tenant?' && wa=(--with-whatsapp)
       # shellcheck disable=SC2086
-      bash "$S/deploy.sh" "$name" --tenant-domain "$domain" --acme-email "$email" ${custom:+--custom-domain "$custom"} "${chal[@]}" "${dbflag[@]}" "${wa[@]}"
+      bash "$S/deploy.sh" "$name" --tenant-domain "$domain" --acme-email "$email" \
+        --channel "$chan" --db-mode "$db" ${custom:+--custom-domain "$custom"} "${wa[@]}"
       show_dns "$domain" "$custom" "$(public_ip)"
       ;;
     'Scale services')
@@ -65,15 +72,16 @@ provider_flow() {
       else bash "$S/set-domain.sh" "$name" --remove; fi
       ;;
     'Set TLS / cert mode')
-      local name m tok=(); name="$(_compose_pick)" || return
-      m="$(ui_menu 'Certificate mode' 'cloudflare — behind Cloudflare proxy (self-signed origin)' 'le — direct domain, Lets Encrypt HTTP-01' 'le-dns-cloudflare — LE DNS-01 (needs token)')" || return
+      # Traefik is host-level (shared edge) — this applies to every tenant here.
+      local m tok=()
+      m="$(ui_menu 'Certificate mode (whole host)' 'cloudflare — behind Cloudflare proxy (self-signed origin)' 'le — direct domains, Lets Encrypt HTTP-01' 'le-dns-cloudflare — LE DNS-01 (needs token)')" || return
       case "$m" in
         cloudflare*) m=cloudflare ;;
         le-dns*) m=le-dns-cloudflare; tok=(--cf-dns-token "$(ui_input 'Cloudflare API token (Zone:DNS:Edit + Zone:Read)')") ;;
         le*) m=le ;;
         *) return ;;
       esac
-      bash "$S/set-tls.sh" "$name" --tls-mode "$m" "${tok[@]}"
+      bash "$S/set-tls.sh" --tls-mode "$m" "${tok[@]}"
       ;;
     'WhatsApp gateway')
       local name; name="$(_compose_pick)" || return

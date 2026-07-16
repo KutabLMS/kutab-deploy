@@ -51,7 +51,7 @@ chmod 600 "$ENVF"
 COMPOSE="$PROVIDER_ROOT/templates/single-stack.compose.yml"
 compose=(docker compose -p "kutab-$NAME" --env-file "$ENVF" -f "$COMPOSE")
 log "Re-applying frontend routing for $NAME (custom domain: ${NEW_CUSTOM:-<none>})"
-"${compose[@]}" up -d frontend traefik
+"${compose[@]}" up -d frontend   # Traefik lives on the shared edge; it re-reads labels itself
 
 if [[ -n "$NEW_CUSTOM" ]]; then
   ok "Custom domain set to $NEW_CUSTOM. Point its DNS A record at this host — Traefik fetches the cert on first hit."

@@ -21,9 +21,10 @@ SKIP_MIGRATE=false
 SHARED_DB=false
 DRY_RUN=false
 
-BACKEND_IMAGE="${BACKEND_IMAGE:-ghcr.io/uni-devs/kutab-api:latest}"
-FRONTEND_IMAGE="${FRONTEND_IMAGE:-ghcr.io/uni-devs/kutab-front:latest}"
-NGINX_IMAGE="${NGINX_IMAGE:-ghcr.io/uni-devs/kutab-api-nginx:latest}"
+# --channel picks which built images to run (CI tags master→latest, dev→dev).
+# An explicit --backend-image / --frontend-image / --nginx-image still wins.
+CHANNEL="${CHANNEL:-latest}"
+BACKEND_IMAGE="${BACKEND_IMAGE:-}"; FRONTEND_IMAGE="${FRONTEND_IMAGE:-}"; NGINX_IMAGE="${NGINX_IMAGE:-}"
 BACKEND_REPLICAS="${BACKEND_REPLICAS:-1}"
 FRONTEND_REPLICAS="${FRONTEND_REPLICAS:-1}"
 HORIZON_REPLICAS="${HORIZON_REPLICAS:-1}"
@@ -82,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --tenant-domain) TENANT_DOMAIN="$2"; shift 2 ;;
     --custom-domain) CUSTOM_DOMAIN="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
+    --channel) CHANNEL="$2"; shift 2 ;;
     --backend-image) BACKEND_IMAGE="$2"; shift 2 ;;
     --frontend-image) FRONTEND_IMAGE="$2"; shift 2 ;;
     --nginx-image) NGINX_IMAGE="$2"; shift 2 ;;
@@ -105,6 +107,11 @@ while [[ $# -gt 0 ]]; do
     *) fail "Unknown option: $1" ;;
   esac
 done
+
+# images follow the channel unless one was pinned explicitly
+BACKEND_IMAGE="${BACKEND_IMAGE:-ghcr.io/uni-devs/kutab-api:$CHANNEL}"
+FRONTEND_IMAGE="${FRONTEND_IMAGE:-ghcr.io/uni-devs/kutab-front:$CHANNEL}"
+NGINX_IMAGE="${NGINX_IMAGE:-ghcr.io/uni-devs/kutab-api-nginx:$CHANNEL}"
 
 [[ "$TENANT_NAME" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$ || "$TENANT_NAME" =~ ^[a-z0-9]$ ]] || fail "Invalid tenant name: $TENANT_NAME"
 command -v docker >/dev/null || fail "docker is required"
