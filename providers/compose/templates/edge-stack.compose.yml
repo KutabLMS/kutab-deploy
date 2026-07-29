@@ -35,9 +35,12 @@ services:
     networks: [kutab-shared]
     restart: unless-stopped
 
-  # Shared MySQL for every tenant on this host — enable with: --profile shared-db
-  # Tenants get their own database + user via provision-tenant-db.sh.
-  mysql:
+  # Shared MySQL for every tenant on this host — enable with: --profile shared-db.
+  # Named 'shared-db' (NOT 'mysql') on purpose: on the shared network the compose
+  # service name becomes a DNS alias, and a tenant's backend also resolves 'mysql'
+  # (its own bundled DB) — a service named 'mysql' here would hijack that lookup.
+  # Tenants reach this via the explicit 'kutab-db' alias only.
+  shared-db:
     image: ${SHARED_DB_IMAGE:-mysql:8.4.8}
     profiles: [shared-db]
     command:

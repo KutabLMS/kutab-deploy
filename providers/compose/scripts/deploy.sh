@@ -134,7 +134,7 @@ if ! docker network inspect kutab-shared >/dev/null 2>&1; then
   [[ "$DB_MODE" == shared ]] && edge_args+=(--shared-db)
   [[ "$DRY_RUN" == true ]] && edge_args+=(--dry-run)
   bash "$SCRIPT_DIR/deploy-edge.sh" "${edge_args[@]}" || fail "Could not bring up the shared edge"
-elif [[ "$DB_MODE" == shared ]] && ! docker ps --format '{{.Names}}' | grep -q '^kutab-edge-mysql-1$'; then
+elif [[ "$DB_MODE" == shared ]] && ! docker ps --format '{{.Names}}' | grep -q '^kutab-edge-shared-db-1$'; then
   log "--db-mode shared but the edge has no shared MySQL — starting it"
   bash "$SCRIPT_DIR/deploy-edge.sh" --shared-db || fail "Could not start the shared MySQL on the edge"
 fi
@@ -237,12 +237,12 @@ if [[ "$DB_MODE" == shared && "$DRY_RUN" != true ]]; then
   [[ -f "$shared_pw_file" ]] || fail "Shared DB root password not found ($shared_pw_file). Run: kutab-deploy compose deploy-edge --shared-db"
   shared_root_pw="$(cat "$shared_pw_file")"
   for _ in $(seq 1 30); do
-    if tenant_db_sql | docker exec -i kutab-edge-mysql-1 mysql -uroot -p"$shared_root_pw" 2>/dev/null; then
+    if tenant_db_sql | docker exec -i kutab-edge-shared-db-1 mysql -uroot -p"$shared_root_pw" 2>/dev/null; then
       shared_ok=true; break
     fi
     sleep 4
   done
-  [[ "${shared_ok:-false}" == true ]] || fail "Could not reach the shared MySQL (kutab-edge-mysql-1). Is the edge up with --shared-db?"
+  [[ "${shared_ok:-false}" == true ]] || fail "Could not reach the shared MySQL (kutab-edge-shared-db-1). Is the edge up with --shared-db?"
 fi
 
 # ── compose interpolation env ──────────────────────────────────────────────────
